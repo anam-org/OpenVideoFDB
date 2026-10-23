@@ -98,11 +98,21 @@ def agent_segments(wav: Path, words: list, clip_id: str = "", *, vad_backend: st
 
 
 def score_clip(clip_dir: Path, sample: Sample, run: AgentRun, *, asr_model: str = asr.DEFAULT_MODEL,
-               asr_backend: str = asr.DEFAULT_BACKEND) -> dict:
-    """ASR + VAD + derived signals + timing for one clip. Returns the timing.json payload."""
+               asr_backend: str = asr.DEFAULT_BACKEND, vad_backend: str = "auto") -> dict:
+    """ASR + VAD + derived signals + timing for one clip. Returns the timing.json payload.
+
+    `vad_backend` reaches `agent_segments`, which already accepts it. Worth exposing because
+    the right detector depends on what produced the agent track: "auto" prefers silero, which
+    is built for noisy human audio, and on synthesised speech against digital silence it can
+    miss a clearly audible utterance entirely. Measured on one clip, a 420 ms backchannel at
+    RMS ~2000 against a zero floor: silero found no region, energy found 17.88-18.30. With no
+    region to anchor it the word falls through to its ASR timestamps, which whisper had given
+    a 1.40 s span starting 1.09 s before the sound, and `is_backchannel` then rejects it on
+    duration and counts it as taking the floor -- so a backchannel scores as its opposite.
+    """
     wav = _resolve(run.agent_audio_path, clip_dir, "agent.wav")
     words = asr.load_or_transcribe(wav, model=asr_model, backend=asr_backend)
-    segs, seg_info = agent_segments(wav, words, sample.clip_id)
+    segs, seg_info = agent_segments(wav, words, sample.clip_id, vad_backend=vad_backend)
     ds, de, end = sample.dynamic_start_s, sample.dynamic_end_s, sample.duration_s
     ov = overlap_summary(segs, ds, de, end)
     parts = partition(segs, ds, de, end)
